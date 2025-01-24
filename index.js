@@ -22,41 +22,55 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const userCollection = client.db('bloodDb').collection('users');
     const donationRequestCollection = client.db('bloodDb').collection('donationRequests');
     const blogCollection = client.db('bloodDb').collection('blog');
+    const donationCollection = client.db("bloodDb").collection("requests");
 
     // Register User Endpoint
     app.post('/register', async (req, res) => {
-      const user = req.body;
-      const { email, name, avatar, bloodGroup, district, upazila, password } = req.body;
-      const query = {email: user.email}
+      try {
+        const user = req.body;
+        const { email, name, avatar, bloodGroup, district, upazila, password } = req.body;
+        const query = { email: user.email };
 
-      const existingUser = await userCollection.findOne({ email, query });
-      if (existingUser) {
-        return res.status(400).send({ message: 'User already exists!' });
+        // Check if the user already exists
+        const existingUser = await userCollection.findOne({ email });
+        if (existingUser) {
+          return res.status(400).send({ message: 'User already exists!' });
+        }
+
+        // Create a new user object
+        const newUser = {
+          email,
+          name,
+          avatar,
+          bloodGroup,
+          district,
+          upazila,
+          password,
+          role: 'donor',
+          status: 'active',
+        };
+
+        // Insert the new user into the database
+        const result = await userCollection.insertOne(newUser);
+        console.log('User registered successfully:', result);
+        res.status(201).send({
+          message: 'User registered successfully!',
+          userId: result.insertedId,
+        });
+      } catch (error) {
+        console.log('Error registering user:', error); // Log the error for debugging purposes
+        res.status(500).send({
+          message: 'An error occurred while registering the user.',
+          error: error.message, // Optionally send the error message to the client
+        });
       }
-
-      const newUser = {
-        email,
-        name,
-        avatar,
-        bloodGroup,
-        district,
-        upazila,
-        password,
-        role: 'donor',
-        status: 'active',
-      };
-
-      const result = await userCollection.insertOne(newUser);
-      res.status(201).send({
-        message: 'User registered successfully!',
-        userId: result.insertedId,
-      });
     });
+
 
     // Get All Users Endpoint
     app.get('/users', async (req, res) => {
@@ -110,7 +124,7 @@ async function run() {
     });
 
     // Get 3 Recent Donation Requests for a Donor
-    app.get('/dashboard/recent-donation-requests', async (req, res) => {
+    app.get('/recent-donation-requests', async (req, res) => {
       const { email } = req.query;
 
       if (!email) {
@@ -131,6 +145,23 @@ async function run() {
       res.send(recentRequests);
     });
 
+    // Fetch details of a specific donation request by ID
+    app.get('/donation-requests/:id', async (req, res) => {
+      const { id } = req.params;
+      console.log('Request ID:', id)
+
+      try {
+        const requestDetails = await donationRequestCollection.findOne(id);
+        if (requestDetails) {
+          res.status(200).json(requestDetails);
+        } else {
+          res.status(404).json({ message: 'Donation request not found' });
+        }
+      } catch (error) {
+        res.status(500).json({ message: 'Error fetching donation request details', error });
+      }
+    });
+
     // Update Donation Request Status
     app.patch('/donation-requests/:id/status', async (req, res) => {
       const { id } = req.params;
@@ -146,7 +177,11 @@ async function run() {
       );
 
       if (result.matchedCount === 0) {
-        return res.status(404).send({ message: 'Donation request not found or invalid status' });
+        const donationRequest = await donationRequestCollection.findOne({ _id: new ObjectId(id) });
+        if (!donationRequest) {
+          return res.status(404).send({ message: 'Donation request not found' });
+        }
+        return res.status(400).send({ message: 'Cannot update donation request in current status' });
       }
 
       res.send({ message: 'Donation request updated successfully' });
@@ -154,9 +189,10 @@ async function run() {
 
     // Delete Donation Request
     app.delete('/donation-requests/:id', async (req, res) => {
-      const { id } = req.params;
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
 
-      const result = await donationRequestCollection.deleteOne({ _id: new ObjectId(id) });
+      const result = await donationRequestCollection.deleteOne(query);
 
       if (result.deletedCount === 0) {
         return res.status(404).send({ message: 'Donation request not found' });
@@ -165,35 +201,38 @@ async function run() {
       res.send({ message: 'Donation request deleted successfully' });
     });
 
-    // Get All Donation Requests with Pagination and Filtering
-    app.get('/my-donation-requests', async (req, res) => {
-      const { email, page = 1, limit = 10, status } = req.query;
+    // Fetch user's donation requests with filtering and pagination
+    app.get("/my-donation-requests", async (req, res) => {
+      try {
+        const { email, status, page = 1, limit = 10 } = req.query;
 
-      if (!email) {
-        return res.status(400).send({ message: 'User email is required' });
+        if (!email) {
+          return res.status(400).json({ message: "User email is required." });
+        }
+
+        const filter = { requesterEmail: email };
+        if (status) {
+          filter.donationStatus = status;
+        }
+
+        const skip = (page - 1) * limit;
+        const requests = await donationCollection.find(filter)
+          .skip(skip)
+          .limit(parseInt(limit))
+          .sort({ createdAt: -1 }); // Sort by latest
+
+        const totalRequests = await donationCollection.countDocuments(filter);
+
+        res.status(200).json({
+          data: requests,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(totalRequests / limit),
+          totalRequests,
+        });
+      } catch (error) {
+        console.error("Error fetching donation requests:", error);
+        res.status(500).json({ message: "Internal server error." });
       }
-
-      const query = { requesterEmail: email };
-      if (status) {
-        query.donationStatus = status;
-      }
-
-      const skip = (parseInt(page) - 1) * parseInt(limit);
-      const totalRequests = await donationRequestCollection.countDocuments(query);
-      const requests = await donationRequestCollection
-        .find(query)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit))
-        .toArray();
-
-      res.send({
-        totalRequests,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        totalPages: Math.ceil(totalRequests / limit),
-        requests,
-      });
     });
 
 
@@ -354,7 +393,7 @@ async function run() {
 
 
     // Create a new blog
-  app.post('/content-management/blog', async (req, res) => {
+    app.post('/content-management/blog', async (req, res) => {
       const { title, thumbnail, content, createdBy } = req.body;
 
       try {
@@ -363,7 +402,7 @@ async function run() {
           thumbnail,
           content,
           createdBy,
-          status: 'draft', 
+          status: 'draft',
           createdAt: new Date(),
         };
 
@@ -449,6 +488,53 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).send({ message: 'Failed to delete blog' });
+      }
+    });
+
+
+
+    // Get all pending donation requests
+    app.get('/pending', async (req, res) => {
+      try {
+        const requests = await donationCollection.find({ status: 'pending' });
+        res.status(200).json(requests);
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch donation requests' });
+      }
+    });
+
+    // Get a specific donation request by ID
+    app.get("/donation-requests/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const request = await donationCollection.findOne({ _id: new ObjectId(id) });
+        if (request) {
+          res.send(request);
+        } else {
+          res.status(404).send({ message: "Donation request not found." });
+        }
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch the donation request.", error });
+      }
+    });
+
+
+
+
+
+    // get single user with user email
+    app.get('/user/:email', async (req, res) => {
+      const { email } = req.params;
+
+      try {
+        const result = await userCollection.findOne({ email: email });
+
+
+
+        res.send({ message: 'get user success', data: result });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: 'Failed to get user' });
       }
     });
 
