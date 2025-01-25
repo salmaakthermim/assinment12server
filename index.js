@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 
 const app = express();
@@ -28,6 +28,7 @@ async function run() {
     const donationRequestCollection = client.db('bloodDb').collection('donationRequests');
     const blogCollection = client.db('bloodDb').collection('blog');
     const donationCollection = client.db("bloodDb").collection("requests");
+    const DonationRequest = client.db("bloodDb").collection("donation");
 
     // Register User Endpoint
     app.post('/register', async (req, res) => {
@@ -201,6 +202,8 @@ async function run() {
       res.send({ message: 'Donation request deleted successfully' });
     });
 
+
+
     // Fetch user's donation requests with filtering and pagination
     app.get("/my-donation-requests", async (req, res) => {
       try {
@@ -216,10 +219,10 @@ async function run() {
         }
 
         const skip = (page - 1) * limit;
-        const requests = await donationCollection.find(filter)
-          .skip(skip)
-          .limit(parseInt(limit))
-          .sort({ createdAt: -1 }); // Sort by latest
+
+        // Convert cursor to array of documents
+        const requests = await donationCollection.find({ email: email })
+
 
         const totalRequests = await donationCollection.countDocuments(filter);
 
@@ -236,6 +239,26 @@ async function run() {
     });
 
 
+
+    // Dashboard Statistics Endpoint
+    app.get('/dashboard-statistics', async (req, res) => {
+      try {
+        const totalUsers = await userCollection.countDocuments();
+        const totalRequests = await donationRequestCollection.countDocuments();
+        const totalFunding = await donationCollection.aggregate([
+          { $group: { _id: null, total: { $sum: "$amount" } } },
+        ]).toArray();
+
+        res.send({
+          totalUsers,
+          totalRequests,
+          totalFunding: totalFunding[0]?.total || 0, // Handle case when no donations exist
+        });
+      } catch (error) {
+        console.error('Failed to fetch statistics:', error);
+        res.status(500).send({ message: 'Failed to fetch statistics', error });
+      }
+    });
     // Get All Users with Pagination and Filtering
     app.get("/users", async (req, res) => {
       try {
@@ -422,7 +445,7 @@ async function run() {
       const { status } = req.query;
 
       try {
-        const query = status ? { status } : {}; // Filter by status if provided
+        const query = status ? { status } : {};
         const blogs = await blogCollection.find(query).toArray();
         res.send(blogs);
       } catch (err) {
@@ -517,6 +540,71 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch the donation request.", error });
       }
     });
+
+
+
+
+    // Middleware to check if the user is a volunteer
+const isVolunteer = (req, res, next) => {
+  if (req.user.role !== "volunteer") {
+    return res.status(403).json({ message: "Access denied" });
+  }
+  next();
+};
+
+// Fetch all blood donation requests with pagination and filtering
+app.get("/all-donation-requests", async (req, res) => {
+  try {
+    const { page = 1, status = "" } = req.query;
+    const limit = 10; 
+    const filter = status ? { donationStatus: status } : {};
+
+    const totalRequests = await DonationRequest.countDocuments(filter);
+    const requests = await DonationRequest.find(filter)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .sort({ createdAt: -1 });
+
+    res.json({
+      requests,
+      totalPages: Math.ceil(totalRequests / limit),
+    });
+  } catch (error) {
+    console.error("Error fetching donation requests:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Update donation status (volunteers can only update status)
+app.patch(
+  "/donation-requests/:id/status",
+  isVolunteer, 
+  async (req, res) => {
+    try {
+      const { status } = req.body;
+      const validStatuses = ["pending", "inprogress", "done", "canceled"];
+
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+
+      const request = await DonationRequest.findByIdAndUpdate(
+        req.params.id,
+        { donationStatus: status },
+        { new: true }
+      );
+
+      if (!request) {
+        return res.status(404).json({ message: "Request not found" });
+      }
+
+      res.json({ message: "Status updated successfully", request });
+    } catch (error) {
+      console.error("Error updating status:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  }
+);
 
 
 
