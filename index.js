@@ -73,11 +73,40 @@ async function run() {
     });
 
 
-    // Get All Users Endpoint
-    app.get('/users', async (req, res) => {
-      const users = await userCollection.find().toArray();
-      res.send(users);
+
+
+    // Get users with filtering and pagination
+app.get('/users', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const filter = {};
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
+    const totalUsers = await userCollection.countDocuments(filter);
+    const totalPages = Math.ceil(totalUsers / limit);
+
+    const users = await userCollection
+      .find(filter)
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    res.json({
+      users,
+      currentPage: page,
+      totalPages,
+      totalUsers
     });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching users' });
+  }
+});
+
 
     // Create Donation Request Endpoint
     app.post('/donation-requests', async (req, res) => {
@@ -216,40 +245,45 @@ async function run() {
     });
 
 
-
-    // Fetch user's donation requests with filtering and pagination
-    app.get("/my-donation-requests", async (req, res) => {
+    app.get('/my-donation-requests', async (req, res) => {
       try {
-        const { email, status, page = 1, limit = 10 } = req.query;
-
-        if (!email) {
-          return res.status(400).json({ message: "User email is required." });
-        }
-
-        const filter = { requesterEmail: email };
-        if (status) {
-          filter.donationStatus = status;
-        }
-
-        const skip = (page - 1) * limit;
-
-        // Convert cursor to array of documents
-        const requests = await donationCollection.find({ email: email })
-
-
-        const totalRequests = await donationCollection.countDocuments(filter);
-
-        res.status(200).json({
-          data: requests,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(totalRequests / limit),
-          totalRequests,
-        });
+          const { email, status, page = 1, limit = 10 } = req.query;
+          const skip = (page - 1) * limit;
+  
+          // Build query
+          const query = { requesterEmail: email };
+          if (status) {
+              query.donationStatus = status;
+          }
+  
+          // Get total count for pagination
+          const total = await donationRequestCollection.countDocuments(query);
+          const totalPages = Math.ceil(total / limit);
+  
+          // Fetch donations with pagination
+          const donations = await donationRequestCollection
+              .find(query)
+              .sort({ createdAt: -1 })
+              .skip(skip)
+              .limit(parseInt(limit))
+              .toArray();
+  
+          res.json({
+              donations,
+              currentPage: parseInt(page),
+              totalPages,
+              total
+          });
+  
       } catch (error) {
-        console.error("Error fetching donation requests:", error);
-        res.status(500).json({ message: "Internal server error." });
+          console.error('Error fetching donation requests:', error);
+          res.status(500).json({ 
+              message: 'Error fetching donation requests',
+              error: error.message 
+          });
       }
-    });
+  });
+  
 
 
 
@@ -299,55 +333,47 @@ async function run() {
       }
     });
 
-    // Update User Status (Block/Unblock)
-    app.patch("/users/:id/status", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { status } = req.body;
+// Update user status
+app.patch('/users/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
 
-        if (!["active", "blocked"].includes(status)) {
-          return res.status(400).send({ message: "Invalid status" });
-        }
+    const result = await userCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status } }
+    );
 
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { status } }
-        );
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: "User not found" });
-        }
+    res.json({ message: 'Status updated successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating status' });
+  }
+});
 
-        res.send({ message: `User status updated to ${status}` });
-      } catch (error) {
-        res.status(500).send({ message: "Failed to update user status", error });
-      }
-    });
+// Update user role
+app.patch('/users/:id/role', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { role } = req.body;
 
-    // Update User Role
-    app.patch("/users/:id/role", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { role } = req.body;
+    const result = await userCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { role } }
+    );
 
-        if (!["donor", "volunteer", "admin"].includes(role)) {
-          return res.status(400).send({ message: "Invalid role" });
-        }
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
-        const result = await userCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { role } }
-        );
-
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: "User not found" });
-        }
-
-        res.send({ message: `User role updated to ${role}` });
-      } catch (error) {
-        res.status(500).send({ message: "Failed to update user role", error });
-      }
-    });
+    res.json({ message: 'Role updated successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating role' });
+  }
+});
 
 
     // All Blood Donation Request
@@ -509,6 +535,53 @@ async function run() {
       }
     });
 
+        // Fetch details of a specific donation request by ID
+        app.get('/content-management/blogs/:id', async (req, res) => {
+          const { id } = req.params;
+          console.log('Request ID:', id)
+    
+          try {
+            const requestDetails = await blogCollection.findOne({_id:new ObjectId(id)});
+            if (requestDetails) {
+              res.status(200).json(requestDetails);
+            } else {
+              res.status(404).json({ message: 'blog request not found' });
+            }
+          } catch (error) {
+            res.status(500).json({ message: 'Error fetching blog request details', error });
+          }
+        });
+
+    app.put('/content-management/blogs/:id', async (req, res) => {
+      const { id } = req.params;
+      const { title, thumbnail, content, createdBy } = req.body;
+    
+      try {
+        const result = await blogCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              title,
+              thumbnail,
+              content,
+              createdBy,
+              updatedAt: new Date()
+            }
+          }
+        );
+    
+        if (result.modifiedCount > 0) {
+          res.status(200).send({ message: 'Blog updated successfully' });
+        } else {
+          res.status(404).send({ message: 'Blog not found' });
+        }
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: 'Failed to update blog' });
+      }
+    });
+    
+
     // Delete a blog (only admin can do this)
     app.delete('/content-management/blogs/:id', async (req, res) => {
       const { id } = req.params;
@@ -526,6 +599,8 @@ async function run() {
         res.status(500).send({ message: 'Failed to delete blog' });
       }
     });
+
+
 
 
 
