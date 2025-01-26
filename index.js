@@ -64,10 +64,10 @@ async function run() {
           userId: result.insertedId,
         });
       } catch (error) {
-        console.log('Error registering user:', error); // Log the error for debugging purposes
+        console.log('Error registering user:', error); 
         res.status(500).send({
           message: 'An error occurred while registering the user.',
-          error: error.message, // Optionally send the error message to the client
+          error: error.message, 
         });
       }
     });
@@ -123,6 +123,19 @@ async function run() {
         requestId: result.insertedId,
       });
     });
+
+    app.get("/user-profile", async (req, res) => {
+      const email = req.query.email;
+    
+      try {
+        const user = await userCollection.findOne({ email });
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+        res.json(user);
+      } catch (error) {
+        res.status(500).json({ success: false, message: "Failed to fetch user profile" });
+      }
+    });
+
 
     // Get 3 Recent Donation Requests for a Donor
     app.get('/recent-donation-requests', async (req, res) => {
