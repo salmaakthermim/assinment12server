@@ -644,18 +644,6 @@ async function run() {
       next();
     };
 
-    //     // Get donation request details by ID
-    // app.get("/donation-requests/:id", async (req, res) => {
-    //   try {
-    //     const donationRequest = await donationRequestCollection.findById(req.params.id);
-    //     if (!donationRequest) {
-    //       return res.status(404).json({ message: "Donation request not found" });
-    //     }
-    //     res.status(200).json(donationRequest);
-    //   } catch (error) {
-    //     res.status(500).json({ message: "Server error", error });
-    //   }
-    // });
 
     // Update donation request status
     app.patch("donation-requests/:id/status", async (req, res) => {
