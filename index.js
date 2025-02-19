@@ -34,7 +34,7 @@ async function run() {
     app.post('/register', async (req, res) => {
       try {
         const user = req.body;
-        const { email, name, avatar, bloodGroup, district, upazila, password } = req.body;
+        const { email, name, avatar, bloodGroup, district,photoURL, upazila, password } = req.body;
         const query = { email: user.email };
 
         // Check if the user already exists
@@ -52,6 +52,7 @@ async function run() {
           district,
           upazila,
           password,
+          photoURL,
           role: 'donor',
           status: 'active',
         };
@@ -689,7 +690,7 @@ async function run() {
     console.log('Connected to MongoDB successfully!');
   } finally {
     // Uncomment this line to close the connection when the server stops
-    // await client.close();
+    
   }
 }
 
