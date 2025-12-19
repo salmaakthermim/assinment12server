@@ -34,7 +34,7 @@ async function run() {
     app.post('/register', async (req, res) => {
       try {
         const user = req.body;
-        const { email, name, avatar, bloodGroup, district,photoURL, upazila, password } = req.body;
+        const { email, name, avatar, bloodGroup, district, photoURL, upazila, password } = req.body;
         const query = { email: user.email };
 
         // Check if the user already exists
@@ -115,6 +115,7 @@ async function run() {
         requesterName,
         requesterEmail,
         recipientName,
+
         recipientDistrict,
         recipientUpazila,
         hospitalName,
@@ -135,6 +136,7 @@ async function run() {
         requesterName,
         requesterEmail,
         recipientName,
+
         recipientDistrict,
         recipientUpazila,
         hospitalName,
@@ -192,44 +194,98 @@ async function run() {
     // Fetch details of a specific donation request by ID
     app.get('/donation-requests/:id', async (req, res) => {
       const { id } = req.params;
-      console.log('Request ID:', id)
 
       try {
-        const requestDetails = await donationRequestCollection.findOne(id);
-        if (requestDetails) {
-          res.status(200).json(requestDetails);
-        } else {
-          res.status(404).json({ message: 'Donation request not found' });
+        const request = await donationRequestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!request) {
+          return res.status(404).send({ message: 'Donation request not found' });
         }
+
+        res.send(request);
       } catch (error) {
-        res.status(500).json({ message: 'Error fetching donation request details', error });
+        res.status(500).send({
+          message: 'Failed to fetch donation request',
+          error: error.message,
+        });
       }
     });
+
+
+
+    app.patch('/donation-requests/:id', async (req, res) => {
+      const { id } = req.params;
+      const {
+        recipientName,
+
+        recipientDistrict,
+        recipientUpazila,
+        donationDate,
+        donationTime,
+        bloodGroup,
+      } = req.body;
+
+      try {
+        // 🔐 Only owner can edit
+        const result = await donationRequestCollection.updateOne(
+          {
+            _id: new ObjectId(id),
+            // requesterEmail must match (frontend থেকে পাঠাবে)
+            requesterEmail: req.body.requesterEmail,
+          },
+          {
+            $set: {
+              recipientName,
+
+              recipientDistrict,
+              recipientUpazila,
+              donationDate,
+              donationTime,
+              bloodGroup,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(403).send({
+            message: 'Unauthorized or donation request not found',
+          });
+        }
+
+        res.send({ message: 'Donation request updated successfully' });
+      } catch (error) {
+        res.status(500).send({
+          message: 'Failed to update donation request',
+          error: error.message,
+        });
+      }
+    });
+
 
     // Update Donation Request Status
     app.patch('/donation-requests/:id/status', async (req, res) => {
       const { id } = req.params;
       const { status } = req.body;
 
-      if (!['done', 'canceled'].includes(status)) {
-        return res.status(400).send({ message: 'Invalid status update' });
+      if (!['pending', 'inprogress', 'done', 'canceled'].includes(status)) {
+        return res.status(400).send({ message: 'Invalid status' });
       }
 
       const result = await donationRequestCollection.updateOne(
-        { _id: new ObjectId(id), donationStatus: 'inprogress' },
+        { _id: new ObjectId(id) },
         { $set: { donationStatus: status } }
       );
 
       if (result.matchedCount === 0) {
-        const donationRequest = await donationRequestCollection.findOne({ _id: new ObjectId(id) });
-        if (!donationRequest) {
-          return res.status(404).send({ message: 'Donation request not found' });
-        }
-        return res.status(400).send({ message: 'Cannot update donation request in current status' });
+        return res.status(404).send({ message: 'Donation request not found' });
       }
 
-      res.send({ message: 'Donation request updated successfully' });
+      res.send({ message: 'Status updated successfully' });
     });
+
 
     // Delete Donation Request
     app.delete('/donation-requests/:id', async (req, res) => {
@@ -690,7 +746,7 @@ async function run() {
     console.log('Connected to MongoDB successfully!');
   } finally {
     // Uncomment this line to close the connection when the server stops
-    
+
   }
 }
 
